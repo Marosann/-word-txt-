@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "JQ/N+q0+d1k=",
+  "success": true,
+  "projectFilePath": "D:\\code\\ものづくり実習\\study\\WordTableExtractor\\WordTableExtractor.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\62580\\.nuget\\packages\\documentformat.openxml\\3.3.0\\documentformat.openxml.3.3.0.nupkg.sha512",
+    "C:\\Users\\62580\\.nuget\\packages\\documentformat.openxml.framework\\3.3.0\\documentformat.openxml.framework.3.3.0.nupkg.sha512",
+    "C:\\Users\\62580\\.nuget\\packages\\system.io.packaging\\8.0.1\\system.io.packaging.8.0.1.nupkg.sha512"
+  ],
+  "logs": []
+}
