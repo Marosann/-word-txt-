@@ -1,98 +1,102 @@
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
-using DocumentFormat.OpenXml;
+using WordTableExtractor.Models;
 using System.Text.RegularExpressions;
 
-namespace WordTableExtractor;
-public static class WordParser
+namespace WordTableExtractor.Helpers;
+
+public class WordParser
 {
-    private static readonly string[] TargetSections = new[] { "修正内容", "更新内容", "仕様変更内容" };
+    private static readonly Regex VersionPattern = new(@"\b(\d{2}-\d{2}(?:-/[A-Z])?(?:\s*UPDATE\d+[a-zA-Z]?)?)\b", RegexOptions.Compiled);
+    private static readonly string[] ValidCategories = ["機能追加内容", "仕様変更内容", "修正内容", "改善内容"];
 
-    public static List<TableItem> ExtractTableItems(string path)
+    public static List<SimpleTableItem> ParseTargetSections(string wordPath)
     {
-        var items = new List<TableItem>();
+        var result = new List<SimpleTableItem>();
 
-        using (var doc = WordprocessingDocument.Open(path, false))
+        using var wordDoc = WordprocessingDocument.Open(wordPath, false);
+        var bodyElements = wordDoc.MainDocumentPart?.Document.Body?.Elements().ToList();
+        if (bodyElements == null) return result;
+
+        bool isInTargetSection = false;
+        List<string> currentVersions = new();
+        string? currentCategory = null;
+
+        foreach (var element in bodyElements)
         {
-            var elements = doc.MainDocumentPart.Document.Body.Elements<OpenXmlElement>();
-
-            string currentTitle = null;
-            List<string> currentVersions = new();
-            bool inTargetSection = false;
-
-            foreach (var elem in elements)
+            if (element is Paragraph para)
             {
-                if (elem is Paragraph para)
+                string paraText = para.InnerText.Trim();
+
+                var paraProps = para.ParagraphProperties;
+                var styleId = paraProps?.ParagraphStyleId?.Val?.Value;
+                if (styleId == "Heading1" && (paraText.StartsWith("6.") || paraText.StartsWith("7.") || paraText.StartsWith("8.")))
                 {
-                    string text = para.InnerText.Trim();
+                    isInTargetSection = true;
+                    continue;
+                }
+                else if (styleId == "Heading1" && paraText.StartsWith("9."))
+                {
+                    isInTargetSection = false;
+                    continue;
+                }
 
-                    // 判断是否进入了目标章节
-                    foreach (var title in TargetSections)
-                    {
-                        if (text.Contains(title))
-                        {
-                            currentTitle = title;
-                            currentVersions.Clear();
-                            inTargetSection = true;
-                            break;
-                        }
-                    }
-
-                    if (!inTargetSection) continue;
-
-                    // 匹配单个或多个版本号：例如“版本13-10和版本13-11”
-                    var matches = Regex.Matches(text, @"版本?([0-9]{2}-[0-9]{2}(?:-/[A-Z])?)");
+                if (isInTargetSection)
+                {
+                    // 提取多个版本号
+                    var matches = VersionPattern.Matches(paraText);
                     if (matches.Count > 0)
                     {
-                        currentVersions = matches.Select(m => m.Groups[1].Value).Distinct().ToList();
+                        currentVersions = matches.Select(m => m.Value).ToList();
                     }
                 }
-                else if (elem is Table table && inTargetSection && currentVersions.Count > 0)
+            }
+            else if (element is Table table && isInTargetSection)
+            {
+                var allCells = table.Descendants<TableCell>().Select(c => c.InnerText.Trim()).ToList();
+
+                foreach (var category in ValidCategories)
+                {
+                    if (allCells.Any(cell => cell.Contains(category)))
+                    {
+                        currentCategory = category;
+                        break;
+                    }
+                }
+
+                if (currentCategory != null && currentVersions.Any())
                 {
                     foreach (var version in currentVersions)
                     {
-                        items.AddRange(ExtractFromTable(table, currentTitle, version));
+                        var item = new SimpleTableItem
+                        {
+                            Versions = [version],
+                            Category = currentCategory,
+                            FixId = TryExtractFollowingValue(table, "修正ID"),
+                            FixDetail = TryExtractFollowingValue(table, "修正詳細")
+                        };
+                        result.Add(item);
                     }
                 }
             }
         }
 
-        return items;
+        return result;
     }
 
-    private static List<TableItem> ExtractFromTable(Table table, string section, string version)
+    private static string? TryExtractFollowingValue(Table table, string label)
     {
-        var results = new List<TableItem>();
-
         foreach (var row in table.Elements<TableRow>())
         {
-            var cells = row.Elements<TableCell>().ToList();
+            var cells = row.Elements<TableCell>().Select(c => c.InnerText.Trim()).ToList();
             for (int i = 0; i < cells.Count - 1; i++)
             {
-                string label = cells[i].InnerText.Trim();
-                string value = cells[i + 1].InnerText.Trim();
-
-                if (label.Contains("修正ID"))
+                if (cells[i].Contains(label))
                 {
-                    results.Add(new TableItem
-                    {
-                        Title = section,
-                        Version = version,
-                        FixId = value
-                    });
-                }
-                else if (label.Contains("修正詳細") || label.Contains("修正详细"))
-                {
-                    // 查找最后一个 FixId 对应项，填入详细说明
-                    var last = results.LastOrDefault(r => r.Version == version && r.Title == section && string.IsNullOrEmpty(r.FixDetail));
-                    if (last != null)
-                    {
-                        last.FixDetail = value;
-                    }
+                    return cells[i + 1];
                 }
             }
         }
-
-        return results;
+        return null;
     }
 }
